@@ -149,6 +149,33 @@ def format_srt_time(seconds: float) -> str:
 
     return f"{hours:02}:{minutes:02}:{secs:02},{milliseconds:03}"
 
+def split_subtitle_text(text: str, max_line_length: int = 42) -> str:
+    """
+    Разбивает длинный текст субтитра на 1–2 строки,
+    чтобы его было удобнее читать в монтажке.
+    """
+    words = text.split()
+
+    if not words:
+        return ""
+
+    lines = []
+    current_line = ""
+
+    for word in words:
+        if len(current_line) + len(word) + 1 <= max_line_length:
+            if current_line:
+                current_line += " " + word
+            else:
+                current_line = word
+        else:
+            lines.append(current_line)
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    return "\n".join(lines[:2])
 
 def write_srt(segments: list, srt_path: Path) -> None:
     """
@@ -158,7 +185,7 @@ def write_srt(segments: list, srt_path: Path) -> None:
         for index, segment in enumerate(segments, start=1):
             start = format_srt_time(segment.start)
             end = format_srt_time(segment.end)
-            text = segment.text.strip()
+            text = split_subtitle_text(segment.text.strip())
 
             file.write(f"{index}\n")
             file.write(f"{start} --> {end}\n")
