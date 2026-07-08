@@ -62,14 +62,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "video",
         nargs="?",
-        help="Путь к видеофайлу. Например: input/video.mov"
+        help="Путь к видеофайлу. Например: input/video.mov",
     )
 
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
         choices=["tiny", "base", "small", "medium", "large-v3"],
-        help="Модель Whisper. tiny — быстро, но хуже. base/small — точнее."
+        help="Модель Whisper. tiny — быстро, но хуже. base/small — точнее.",
     )
 
     return parser.parse_args()
@@ -104,6 +104,7 @@ def create_output_paths(video_path: Path) -> dict:
         "audio": project_output_folder / "audio.wav",
         "transcript": project_output_folder / "transcript.txt",
         "brief": project_output_folder / "edit_brief.txt",
+        "srt": project_output_folder / "subtitles.srt",
     }
 
 
@@ -130,16 +131,58 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
     print(f"Аудио сохранено: {audio_path}")
 
 
-def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -> None:
+def format_srt_time(seconds: float) -> str:
     """
-    Расшифровывает аудио в текст через faster-whisper.
+    Переводит секунды в формат SRT:
+    00:00:01,500
+    """
+    total_milliseconds = int(seconds * 1000)
+
+    hours = total_milliseconds // 3_600_000
+    total_milliseconds %= 3_600_000
+
+    minutes = total_milliseconds // 60_000
+    total_milliseconds %= 60_000
+
+    secs = total_milliseconds // 1000
+    milliseconds = total_milliseconds % 1000
+
+    return f"{hours:02}:{minutes:02}:{secs:02},{milliseconds:03}"
+
+
+def write_srt(segments: list, srt_path: Path) -> None:
+    """
+    Создаёт SRT-файл с субтитрами.
+    """
+    with open(srt_path, "w", encoding="utf-8") as file:
+        for index, segment in enumerate(segments, start=1):
+            start = format_srt_time(segment.start)
+            end = format_srt_time(segment.end)
+            text = segment.text.strip()
+
+            file.write(f"{index}\n")
+            file.write(f"{start} --> {end}\n")
+            file.write(f"{text}\n\n")
+
+    print(f"SRT-субтитры сохранены: {srt_path}")
+
+
+def transcribe_audio(
+    audio_path: Path,
+    transcript_path: Path,
+    srt_path: Path,
+    model_name: str,
+) -> None:
+    """
+    Расшифровывает аудио в текст через faster-whisper
+    и дополнительно создаёт SRT-файл.
     """
     print(f"Загружаю модель распознавания речи: {model_name}")
 
     model = WhisperModel(
         model_name,
         device="cpu",
-        compute_type="int8"
+        compute_type="int8",
     )
 
     print("Расшифровываю аудио...")
@@ -149,8 +192,14 @@ def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -
         language="ru",
         beam_size=5,
         vad_filter=True,
-        initial_prompt="Это русскоязычное видео для Reels, Shorts или TikTok. Речь может быть про монтаж, продюсирование, клиентов, контент, бизнес и социальные сети."
+        initial_prompt=(
+            "Это русскоязычное видео для Reels, Shorts или TikTok. "
+            "Речь может быть про монтаж, продюсирование, клиентов, "
+            "контент, бизнес и социальные сети."
+        ),
     )
+
+    segments = list(segments)
 
     with open(transcript_path, "w", encoding="utf-8") as file:
         file.write("РАСШИФРОВКА РОЛИКА\n")
@@ -167,6 +216,8 @@ def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -
             file.write(f"[{start} - {end}] {text}\n")
 
     print(f"Расшифровка сохранена: {transcript_path}")
+
+    write_srt(segments, srt_path)
 
 
 def score_phrase(text: str) -> int:
@@ -212,11 +263,13 @@ def parse_transcript(transcript_path: Path) -> list[dict]:
             if not text:
                 continue
 
-            phrases.append({
-                "time": time_part,
-                "text": text,
-                "score": score_phrase(text),
-            })
+            phrases.append(
+                {
+                    "time": time_part,
+                    "text": text,
+                    "score": score_phrase(text),
+                }
+            )
 
     return phrases
 
@@ -269,7 +322,7 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
     strong_phrases = sorted(
         phrases,
         key=lambda phrase: phrase["score"],
-        reverse=True
+        reverse=True,
     )
 
     strong_phrases = [
@@ -291,7 +344,10 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
             for phrase in hook_candidates:
                 file.write(f"[{phrase['time']}] {phrase['text']}\n")
         else:
-            file.write("Сильные хуки автоматически не найдены. Лучше проверить расшифровку вручную.\n")
+            file.write(
+                "Сильные хуки автоматически не найдены. "
+                "Лучше проверить расшифровку вручную.\n"
+            )
 
         file.write("\n\n2. СИЛЬНЫЕ ФРАЗЫ\n")
         file.write("-" * 40 + "\n")
@@ -306,8 +362,14 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
         file.write("-" * 40 + "\n")
         file.write("- Начать ролик с самой сильной фразы, а не обязательно с первой секунды.\n")
         file.write("- Убрать долгие вступления, паузы и слабые объяснения.\n")
-        file.write("- Каждые 2–4 секунды добавлять визуальное изменение: zoom, B-roll, смену плана, акцент в субтитрах.\n")
-        file.write("- Если есть вопросительная фраза, её можно использовать как хук в первые 1–2 секунды.\n")
+        file.write(
+            "- Каждые 2–4 секунды добавлять визуальное изменение: "
+            "zoom, B-roll, смену плана, акцент в субтитрах.\n"
+        )
+        file.write(
+            "- Если есть вопросительная фраза, её можно использовать "
+            "как хук в первые 1–2 секунды.\n"
+        )
 
         file.write("\n\n4. ГДЕ МОЖНО ДОБАВИТЬ B-ROLL\n")
         file.write("-" * 40 + "\n")
@@ -316,7 +378,11 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
             for suggestion in broll_suggestions[:12]:
                 file.write(f"{suggestion}\n")
         else:
-            file.write("Автоматические B-roll подсказки не найдены. Можно добавить общие кадры: рабочий процесс, монтажный таймлайн, телефон, статистика, созвон.\n")
+            file.write(
+                "Автоматические B-roll подсказки не найдены. "
+                "Можно добавить общие кадры: рабочий процесс, "
+                "монтажный таймлайн, телефон, статистика, созвон.\n"
+            )
 
         file.write("\n\n5. ИДЕИ ДЛЯ СУБТИТРОВ\n")
         file.write("-" * 40 + "\n")
@@ -330,7 +396,10 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
 
         file.write("\n\n6. ЧЕСТНОЕ ПРЕДУПРЕЖДЕНИЕ\n")
         file.write("-" * 40 + "\n")
-        file.write("Этот разбор сделан простой логикой Python, а не настоящим AI-анализом. Его нужно проверять вручную.\n")
+        file.write(
+            "Этот разбор сделан простой логикой Python, "
+            "а не настоящим AI-анализом. Его нужно проверять вручную.\n"
+        )
 
     print(f"Монтажёрский разбор сохранён: {brief_path}")
 
@@ -364,7 +433,12 @@ def main() -> None:
     extract_audio(video_path, output_paths["audio"])
 
     print("2. Делаю расшифровку...")
-    transcribe_audio(output_paths["audio"], output_paths["transcript"], args.model)
+    transcribe_audio(
+        output_paths["audio"],
+        output_paths["transcript"],
+        output_paths["srt"],
+        args.model,
+    )
 
     print("3. Создаю монтажёрский разбор...")
     generate_edit_brief(output_paths["transcript"], output_paths["brief"])
