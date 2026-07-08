@@ -7,10 +7,6 @@ from faster_whisper import WhisperModel
 INPUT_FOLDER = Path("input")
 OUTPUT_FOLDER = Path("output")
 
-OUTPUT_AUDIO = OUTPUT_FOLDER / "audio.wav"
-OUTPUT_TRANSCRIPT = OUTPUT_FOLDER / "transcript.txt"
-OUTPUT_BRIEF = OUTPUT_FOLDER / "edit_brief.txt"
-
 DEFAULT_MODEL = "tiny"
 
 
@@ -91,6 +87,24 @@ def find_input_video() -> Path | None:
             return file
 
     return None
+
+
+def create_output_paths(video_path: Path) -> dict:
+    """
+    Создаёт отдельную папку результата под конкретное видео.
+    Например:
+    input/client.mov -> output/client/
+    """
+    video_name = video_path.stem
+    project_output_folder = OUTPUT_FOLDER / video_name
+    project_output_folder.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "folder": project_output_folder,
+        "audio": project_output_folder / "audio.wav",
+        "transcript": project_output_folder / "transcript.txt",
+        "brief": project_output_folder / "edit_brief.txt",
+    }
 
 
 def extract_audio(video_path: Path, audio_path: Path) -> None:
@@ -326,8 +340,6 @@ def main() -> None:
 
     print("ReelsAssistant запущен")
 
-    OUTPUT_FOLDER.mkdir(exist_ok=True)
-
     if args.video:
         video_path = Path(args.video)
     else:
@@ -342,17 +354,20 @@ def main() -> None:
         print(f"Ошибка: файл не найден: {video_path}")
         return
 
+    output_paths = create_output_paths(video_path)
+
     print(f"Найдено видео: {video_path}")
+    print(f"Папка результата: {output_paths['folder']}")
     print(f"Используемая модель: {args.model}")
 
     print("1. Вытаскиваю аудио из видео...")
-    extract_audio(video_path, OUTPUT_AUDIO)
+    extract_audio(video_path, output_paths["audio"])
 
     print("2. Делаю расшифровку...")
-    transcribe_audio(OUTPUT_AUDIO, OUTPUT_TRANSCRIPT, args.model)
+    transcribe_audio(output_paths["audio"], output_paths["transcript"], args.model)
 
     print("3. Создаю монтажёрский разбор...")
-    generate_edit_brief(OUTPUT_TRANSCRIPT, OUTPUT_BRIEF)
+    generate_edit_brief(output_paths["transcript"], output_paths["brief"])
 
     print("Готово")
 
