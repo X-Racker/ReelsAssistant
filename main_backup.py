@@ -1,6 +1,5 @@
 from pathlib import Path
 import subprocess
-import argparse
 from faster_whisper import WhisperModel
 
 
@@ -11,7 +10,7 @@ OUTPUT_AUDIO = OUTPUT_FOLDER / "audio.wav"
 OUTPUT_TRANSCRIPT = OUTPUT_FOLDER / "transcript.txt"
 OUTPUT_BRIEF = OUTPUT_FOLDER / "edit_brief.txt"
 
-DEFAULT_MODEL = "tiny"
+MODEL_NAME = "tiny"
 
 
 STRONG_MARKERS = [
@@ -53,36 +52,9 @@ BROLL_IDEAS = {
 }
 
 
-def parse_args() -> argparse.Namespace:
-    """
-    Читает аргументы из терминала.
-    Пример:
-    python main.py input/video.mov --model tiny
-    """
-    parser = argparse.ArgumentParser(
-        description="ReelsAssistant — транскрибация видео и создание монтажёрского разбора."
-    )
-
-    parser.add_argument(
-        "video",
-        nargs="?",
-        help="Путь к видеофайлу. Например: input/video.mov"
-    )
-
-    parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        choices=["tiny", "base", "small", "medium", "large-v3"],
-        help="Модель Whisper. tiny — быстро, но хуже. base/small — точнее."
-    )
-
-    return parser.parse_args()
-
-
 def find_input_video() -> Path | None:
     """
     Ищет первый подходящий видеофайл в папке input.
-    Используется, если пользователь не передал видео через аргумент.
     """
     video_extensions = [".mp4", ".mov", ".m4v", ".avi", ".mkv"]
 
@@ -116,14 +88,14 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
     print(f"Аудио сохранено: {audio_path}")
 
 
-def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -> None:
+def transcribe_audio(audio_path: Path, transcript_path: Path) -> None:
     """
     Расшифровывает аудио в текст через faster-whisper.
     """
-    print(f"Загружаю модель распознавания речи: {model_name}")
+    print("Загружаю модель распознавания речи...")
 
     model = WhisperModel(
-        model_name,
+        MODEL_NAME,
         device="cpu",
         compute_type="int8"
     )
@@ -141,7 +113,7 @@ def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -
     with open(transcript_path, "w", encoding="utf-8") as file:
         file.write("РАСШИФРОВКА РОЛИКА\n")
         file.write("=" * 40 + "\n\n")
-        file.write(f"Модель: {model_name}\n")
+        file.write(f"Модель: {MODEL_NAME}\n")
         file.write(f"Язык: {info.language}\n")
         file.write(f"Вероятность языка: {round(info.language_probability, 2)}\n\n")
 
@@ -153,29 +125,6 @@ def transcribe_audio(audio_path: Path, transcript_path: Path, model_name: str) -
             file.write(f"[{start} - {end}] {text}\n")
 
     print(f"Расшифровка сохранена: {transcript_path}")
-
-
-def score_phrase(text: str) -> int:
-    """
-    Даёт фразе баллы, если она похожа на сильный момент для Reels.
-    """
-    score = 0
-    lowered_text = text.lower()
-
-    for marker in STRONG_MARKERS:
-        if marker in lowered_text:
-            score += 2
-
-    if "?" in text:
-        score += 2
-
-    if 30 <= len(text) <= 180:
-        score += 1
-
-    if len(text) > 220:
-        score -= 1
-
-    return score
 
 
 def parse_transcript(transcript_path: Path) -> list[dict]:
@@ -205,6 +154,29 @@ def parse_transcript(transcript_path: Path) -> list[dict]:
             })
 
     return phrases
+
+
+def score_phrase(text: str) -> int:
+    """
+    Даёт фразе баллы, если она похожа на сильный момент для Reels.
+    """
+    score = 0
+    lowered_text = text.lower()
+
+    for marker in STRONG_MARKERS:
+        if marker in lowered_text:
+            score += 2
+
+    if "?" in text:
+        score += 2
+
+    if 30 <= len(text) <= 180:
+        score += 1
+
+    if len(text) > 220:
+        score -= 1
+
+    return score
 
 
 def find_broll_suggestions(phrases: list[dict]) -> list[str]:
@@ -322,34 +294,25 @@ def generate_edit_brief(transcript_path: Path, brief_path: Path) -> None:
 
 
 def main() -> None:
-    args = parse_args()
-
     print("ReelsAssistant запущен")
 
     OUTPUT_FOLDER.mkdir(exist_ok=True)
 
-    if args.video:
-        video_path = Path(args.video)
-    else:
-        video_path = find_input_video()
+    video_path = find_input_video()
 
     if video_path is None:
         print("Ошибка: видео не найдено в папке input")
-        print("Передай путь к видео так: python main.py input/video.mov")
-        return
-
-    if not video_path.exists():
-        print(f"Ошибка: файл не найден: {video_path}")
+        print("Положи видео в папку input")
+        print("Поддерживаемые форматы: .mp4, .mov, .m4v, .avi, .mkv")
         return
 
     print(f"Найдено видео: {video_path}")
-    print(f"Используемая модель: {args.model}")
 
     print("1. Вытаскиваю аудио из видео...")
     extract_audio(video_path, OUTPUT_AUDIO)
 
     print("2. Делаю расшифровку...")
-    transcribe_audio(OUTPUT_AUDIO, OUTPUT_TRANSCRIPT, args.model)
+    transcribe_audio(OUTPUT_AUDIO, OUTPUT_TRANSCRIPT)
 
     print("3. Создаю монтажёрский разбор...")
     generate_edit_brief(OUTPUT_TRANSCRIPT, OUTPUT_BRIEF)
